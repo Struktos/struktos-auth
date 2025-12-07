@@ -1,0 +1,66 @@
+{
+  "name": "@struktos/auth",
+  "version": "0.1.0",
+  "description": "C# Identity-inspired authentication and authorization for Node.js with Struktos",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx watch src/index.ts",
+    "example": "tsx examples/auth-example.ts"
+  },
+  "keywords": [
+    "struktos",
+    "auth",
+    "authentication",
+    "authorization",
+    "jwt",
+    "rbac",
+    "claims",
+    "identity",
+    "security",
+    "enterprise",
+    "typescript"
+  ],
+  "author": "Struktos.js Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/struktosjs/auth"
+  },
+  "bugs": {
+    "url": "https://github.com/struktosjs/auth/issues"
+  },
+  "homepage": "https://github.com/struktosjs/auth#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@struktos/core": "^0.1.0",
+    "express": "^4.18.0 || ^5.0.0"
+  },
+  "dependencies": {
+    "@struktos/adapter-express": "^0.1.0",
+    "@struktos/core": "^0.1.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^5.0.6",
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^24.10.1",
+    "express": "^5.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
