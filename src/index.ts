@@ -1,23 +1,50 @@
 /**
- * @struktos/auth
+ * @struktos/auth v1.0.0
  * 
- * C# Identity-inspired authentication and authorization for Node.js
+ * C# Identity-inspired authentication and authorization for Node.js.
+ * Seamlessly integrated with @struktos/core.
  * 
  * Features:
  * - JWT-based authentication
  * - Role-based authorization (RBAC)
- * - Claim-based authorization
- * - Database-agnostic design
+ * - Claims-based authorization
+ * - Database-agnostic design (IAuthStore)
  * - Context integration with @struktos/core
  * - High-performance caching
  * - Account lockout support
+ * - Hexagonal Architecture (Ports & Adapters)
+ * 
+ * @example
+ * ```typescript
+ * import { 
+ *   AuthMiddleware, 
+ *   JwtTokenAdapter, 
+ *   InMemoryAuthStore 
+ * } from '@struktos/auth';
+ * 
+ * const tokenAdapter = new JwtTokenAdapter({ secret: 'your-secret' });
+ * const authStore = new InMemoryAuthStore();
+ * const authMiddleware = new AuthMiddleware(authService);
+ * 
+ * app.use(authMiddleware);
+ * ```
  */
 
-// Core Service
-export { AuthService, AuthServiceOptions } from './services/AuthService';
+// ==================== Interfaces ====================
 
-// Interfaces
-export { IAuthStore, InMemoryAuthStore } from './interfaces/IAuthStore';
+// Auth Service Interface
+export {
+  IAuthService,
+  IAuthServiceCore,
+} from './interfaces/IAuthService';
+
+// Auth Store Interface
+export {
+  IAuthStore,
+  InMemoryAuthStore,
+} from './interfaces/IAuthStore';
+
+// Auth Guard Interface
 export {
   IAuthGuard,
   AuthorizationContext,
@@ -25,10 +52,35 @@ export {
   RoleBasedGuard,
   ClaimBasedGuard,
   ResourceBasedGuard,
-  CompositeGuard
+  OwnerBasedGuard,
+  CompositeGuard,
+  ConditionalGuard,
 } from './interfaces/IAuthGuard';
 
-// Models
+// Token Port Interface
+export {
+  ITokenPort,
+  TokenGenerationOptions,
+  TokenVerificationOptions,
+  GeneratedToken,
+  TokenPair,
+  TokenVerificationError,
+  TokenErrorType,
+} from './interfaces/ITokenPort';
+
+// Password Port Interface
+export {
+  IPasswordPort,
+  PasswordHashOptions,
+  PasswordValidationResult,
+  PasswordStrengthResult,
+  PasswordStrength,
+  PasswordPolicy,
+  DEFAULT_PASSWORD_POLICY,
+} from './interfaces/IPasswordPort';
+
+// ==================== Models ====================
+
 export {
   User,
   Role,
@@ -36,18 +88,49 @@ export {
   AuthenticationResult,
   TokenPayload,
   LoginCredentials,
-  RegistrationData
+  RegistrationData,
+  AuthContextData,
 } from './models/auth.models';
 
-// Middleware
+// ==================== Middleware ====================
+
+// Authentication Middleware
 export {
-  createAuthenticateMiddleware,
+  AuthMiddleware,
+  AuthMiddlewareOptions,
+  AuthenticatedContextData,
+  createAuthMiddleware,
   createOptionalAuthMiddleware,
-  createAuthorizeMiddleware,
-  requireRoles,
-  requireClaim,
-  AuthenticatedRequest
 } from './middleware/auth.middleware';
 
-// Version
-export const VERSION = '0.1.0';
+// Authorization Middleware
+export {
+  RolesMiddleware,
+  ClaimsMiddleware,
+  GuardMiddleware,
+  requireRoles,
+  requireAllRoles,
+  requireClaim,
+  requireClaims,
+  createAuthorizeMiddleware,
+} from './middleware/authorize.middleware';
+
+// ==================== Adapters ====================
+
+// JWT Token Adapter
+export {
+  JwtTokenAdapter,
+  JwtAdapterOptions,
+  createJwtTokenAdapter,
+} from './adapters/jwt-token.adapter';
+
+// Bcrypt Password Adapter
+export {
+  BcryptPasswordAdapter,
+  BcryptAdapterOptions,
+  createBcryptPasswordAdapter,
+} from './adapters/bcrypt-password.adapter';
+
+// ==================== Version ====================
+
+export const VERSION = '1.0.0';

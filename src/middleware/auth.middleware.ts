@@ -1,266 +1,211 @@
-import { Request, Response, NextFunction } from 'express';
-import { RequestContext } from '@struktos/core';
-import { AuthService } from '../services/AuthService';
-import { IAuthGuard, AuthorizationContext } from '../interfaces/IAuthGuard';
+/**
+ * @struktos/auth - Authentication Middleware
+ * 
+ * IStruktosMiddleware-based authentication middleware.
+ * Extracts JWT from Authorization header and injects user into RequestContext.
+ * 
+ * Works with @struktos/core's middleware pipeline.
+ */
+
+import {
+  IStruktosMiddleware,
+  MiddlewareContext,
+  NextFunction,
+  StruktosContextData,
+  HttpException,
+} from '@struktos/core';
+import { IAuthService } from '../interfaces/IAuthService';
 import { User } from '../models/auth.models';
 
 /**
- * Extended Express Request with authenticated user
+ * Auth middleware options
  */
-export interface AuthenticatedRequest extends Request {
-  user?: User;
+export interface AuthMiddlewareOptions {
+  /** Paths to exclude from authentication */
+  excludePaths?: string[];
+  /** Allow requests without token (optional auth) */
+  optional?: boolean;
+  /** Custom token extractor */
+  tokenExtractor?: (ctx: MiddlewareContext<any>) => string | null;
+  /** Custom error handler */
+  onError?: (error: Error, ctx: MiddlewareContext<any>) => void;
 }
 
 /**
- * Create authentication middleware
- * Extracts JWT from Authorization header and validates it
+ * Extended context data with auth information
  */
-export function createAuthenticateMiddleware<TUser extends User = User>(
-  authService: AuthService<TUser>
-) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      // Extract token from Authorization header
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'No authorization header provided'
-        });
-        return;
-      }
-      
-      // Expected format: "Bearer <token>"
-      const parts = authHeader.split(' ');
-      if (parts.length !== 2 || parts[0] !== 'Bearer') {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Invalid authorization header format. Expected: Bearer <token>'
-        });
-        return;
-      }
-      
-      const token = parts[1];
-      
-      // Validate token
-      const user = await authService.validateToken(token);
-      if (!user) {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Invalid or expired token'
-        });
-        return;
-      }
-      
-      // Store user in request and Context
-      (req as AuthenticatedRequest).user = user;
-      
-      const context = RequestContext.current();
-      if (context) {
-        context.set('user', user);
-        context.set('userId', user.id);
-        context.set('username', user.username);
-      }
-      
-      next();
-    } catch (error) {
-      res.status(401).json({
-        error: 'Unauthorized',
-        message: error instanceof Error ? error.message : 'Authentication failed'
-      });
+export interface AuthenticatedContextData extends StruktosContextData {}
+
+/**
+ * AuthMiddleware - JWT Authentication Middleware
+ * 
+ * Implements IStruktosMiddleware for use with Struktos platform.
+ * Extracts JWT token, validates it, and injects user into context.
+ * 
+ * @example
+ * ```typescript
+ * const authMiddleware = new AuthMiddleware(authService);
+ * app.use(authMiddleware);
+ * 
+ * // In handlers, access user from context
+ * const user = ctx.context.get('user');
+ * ```
+ */
+export class AuthMiddleware<TUser extends User = User>
+  implements IStruktosMiddleware<AuthenticatedContextData>
+{
+  private readonly options: Required<AuthMiddlewareOptions>;
+
+  constructor(
+    private readonly authService: IAuthService<TUser>,
+    options: AuthMiddlewareOptions = {}
+  ) {
+    this.options = {
+      excludePaths: options.excludePaths ?? [],
+      optional: options.optional ?? false,
+      tokenExtractor: options.tokenExtractor ?? this.defaultTokenExtractor.bind(this),
+      onError: options.onError ?? this.defaultErrorHandler.bind(this),
+    };
+  }
+
+  /**
+   * Middleware invocation
+   */
+  async invoke(
+    ctx: MiddlewareContext<AuthenticatedContextData>,
+    next: NextFunction
+  ): Promise<void> {
+    const path = ctx.request.path;
+
+    // Check if path is excluded
+    if (this.isExcludedPath(path)) {
+      await next();
+      return;
     }
-  };
+
+    // Extract token
+    const token = this.options.tokenExtractor(ctx);
+
+    // No token
+    if (!token) {
+      if (this.options.optional) {
+        // Optional auth - continue without user
+        ctx.context.set('isAuthenticated', false);
+        await next();
+        return;
+      }
+
+      // Required auth - throw error
+      throw new HttpException(401, 'Authorization token required');
+    }
+
+    try {
+      // Validate token and get user
+      const user = await this.authService.validateToken(token);
+
+      if (!user) {
+        if (this.options.optional) {
+          ctx.context.set('isAuthenticated', false);
+          await next();
+          return;
+        }
+        throw new HttpException(401, 'Invalid or expired token');
+      }
+
+      // Inject user into context
+      this.injectUserIntoContext(ctx, user);
+
+      // Continue to next middleware
+      await next();
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Token validation error
+      if (this.options.optional) {
+        ctx.context.set('isAuthenticated', false);
+        await next();
+        return;
+      }
+
+      this.options.onError(error as Error, ctx);
+      throw new HttpException(401, 'Authentication failed');
+    }
+  }
+
+  /**
+   * Default token extractor
+   * Extracts Bearer token from Authorization header
+   */
+  private defaultTokenExtractor(ctx: MiddlewareContext<any>): string | null {
+    const authHeader = ctx.request.headers?.authorization as string | undefined;
+
+    if (!authHeader) {
+      return null;
+    }
+
+    // Expected format: "Bearer <token>"
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      return null;
+    }
+
+    return parts[1];
+  }
+
+  /**
+   * Default error handler
+   */
+  private defaultErrorHandler(error: Error, _ctx: MiddlewareContext<any>): void {
+    console.error('[AuthMiddleware] Authentication error:', error.message);
+  }
+
+  /**
+   * Check if path is excluded from authentication
+   */
+  private isExcludedPath(path: string): boolean {
+    return this.options.excludePaths.some((pattern) => {
+      if (pattern.endsWith('*')) {
+        // Wildcard match
+        return path.startsWith(pattern.slice(0, -1));
+      }
+      return path === pattern;
+    });
+  }
+
+  /**
+   * Inject user information into context
+   */
+  private injectUserIntoContext(
+    ctx: MiddlewareContext<AuthenticatedContextData>,
+    user: TUser
+  ): void {
+    ctx.context.set('user', user);
+    ctx.context.set('userId', user.id);
+    ctx.context.set('username', user.username);
+    ctx.context.set('roles', user.roles || []);
+    ctx.context.set('claims', user.claims || []);
+    ctx.context.set('isAuthenticated', true);
+  }
 }
 
 /**
- * Create optional authentication middleware
- * Tries to authenticate but doesn't fail if no token provided
+ * Factory function for creating auth middleware
+ */
+export function createAuthMiddleware<TUser extends User = User>(
+  authService: IAuthService<TUser>,
+  options?: AuthMiddlewareOptions
+): AuthMiddleware<TUser> {
+  return new AuthMiddleware(authService, options);
+}
+
+/**
+ * Factory function for creating optional auth middleware
  */
 export function createOptionalAuthMiddleware<TUser extends User = User>(
-  authService: AuthService<TUser>
-) {
-  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        return next();
-      }
-      
-      const parts = authHeader.split(' ');
-      if (parts.length !== 2 || parts[0] !== 'Bearer') {
-        return next();
-      }
-      
-      const token = parts[1];
-      const user = await authService.validateToken(token);
-      
-      if (user) {
-        (req as AuthenticatedRequest).user = user;
-        
-        const context = RequestContext.current();
-        if (context) {
-          context.set('user', user);
-          context.set('userId', user.id);
-          context.set('username', user.username);
-        }
-      }
-      
-      next();
-    } catch (_error) {
-      // Silently fail for optional auth
-      next();
-    }
-  };
-}
-
-/**
- * Create authorization middleware using guards
- */
-export function createAuthorizeMiddleware(
-  guard: IAuthGuard,
-  contextExtractor?: (req: Request) => AuthorizationContext
-) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      // Get user from request or Context
-      let user = (req as AuthenticatedRequest).user;
-      if (!user) {
-        const context = RequestContext.current();
-        user = context?.get('user') as User | undefined;
-      }
-      
-      if (!user) {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Authentication required'
-        });
-        return;
-      }
-      
-      // Extract authorization context
-      const authContext = contextExtractor
-        ? contextExtractor(req)
-        : {
-            resource: req.baseUrl || req.path,
-            action: req.method.toLowerCase()
-          };
-      
-      // Check authorization
-      const result = await guard.authorize(user, authContext);
-      
-      if (!result.granted) {
-        res.status(403).json({
-          error: 'Forbidden',
-          message: result.reason || 'Access denied'
-        });
-        return;
-      }
-      
-      next();
-    } catch (error) {
-      res.status(500).json({
-        error: 'Internal Server Error',
-        message: error instanceof Error ? error.message : 'Authorization failed'
-      });
-    }
-  };
-}
-
-/**
- * Require specific roles
- * Shorthand for role-based authorization
- */
-export function requireRoles(...roles: string[]) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      let user = (req as AuthenticatedRequest).user;
-      if (!user) {
-        const context = RequestContext.current();
-        user = context?.get('user') as User | undefined;
-      }
-      
-      if (!user) {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Authentication required'
-        });
-        return;
-      }
-      
-      if (!user.roles || user.roles.length === 0) {
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'User has no roles assigned'
-        });
-        return;
-      }
-      
-      const hasRole = roles.some(role => user!.roles?.includes(role));
-      if (!hasRole) {
-        res.status(403).json({
-          error: 'Forbidden',
-          message: `Required roles: ${roles.join(', ')}`
-        });
-        return;
-      }
-      
-      next();
-    } catch (error) {
-      res.status(500).json({
-        error: 'Internal Server Error',
-        message: error instanceof Error ? error.message : 'Authorization failed'
-      });
-    }
-  };
-}
-
-/**
- * Require specific claim
- * Shorthand for claim-based authorization
- */
-export function requireClaim(claimType: string, claimValue?: string) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      let user = (req as AuthenticatedRequest).user;
-      if (!user) {
-        const context = RequestContext.current();
-        user = context?.get('user') as User | undefined;
-      }
-      
-      if (!user) {
-        res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Authentication required'
-        });
-        return;
-      }
-      
-      if (!user.claims || user.claims.length === 0) {
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'User has no claims'
-        });
-        return;
-      }
-      
-      const hasClaim = claimValue
-        ? user.claims.some(c => c.type === claimType && c.value === claimValue)
-        : user.claims.some(c => c.type === claimType);
-      
-      if (!hasClaim) {
-        res.status(403).json({
-          error: 'Forbidden',
-          message: `Required claim: ${claimType}${claimValue ? `=${claimValue}` : ''}`
-        });
-        return;
-      }
-      
-      next();
-    } catch (error) {
-      res.status(500).json({
-        error: 'Internal Server Error',
-        message: error instanceof Error ? error.message : 'Authorization failed'
-      });
-    }
-  };
+  authService: IAuthService<TUser>,
+  options?: Omit<AuthMiddlewareOptions, 'optional'>
+): AuthMiddleware<TUser> {
+  return new AuthMiddleware(authService, { ...options, optional: true });
 }
