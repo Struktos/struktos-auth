@@ -1,29 +1,57 @@
 # @struktos/auth
 
-> C# Identity-inspired authentication and authorization for Node.js
+C# ASP.NET Identity-inspired authentication and authorization for Node.js with Hexagonal Architecture.
 
-[![npm version](https://img.shields.io/npm/v/@struktos/auth.svg)](https://www.npmjs.com/package/@struktos/auth)
+[![npm version](https://badge.fury.io/js/%40struktos%2Fauth.svg)](https://www.npmjs.com/package/@struktos/auth)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
 
-## 🎯 What is this?
+## ✨ Features
 
-`@struktos/auth` brings C# ASP.NET Identity's powerful authentication and authorization patterns to Node.js, seamlessly integrated with [@struktos/core](https://www.npmjs.com/package/@struktos/core).
-
-**Key Features:**
-
-- ✅ **JWT Authentication** - Secure token-based authentication with automatic validation
-- ✅ **Role-Based Access Control (RBAC)** - Simple and powerful role management
-- ✅ **Claims-Based Authorization** - Fine-grained permissions like C# Identity
-- ✅ **Database-Agnostic** - Works with any database through `IAuthStore` interface
-- ✅ **Context Integration** - Automatic user injection into @struktos/core Context
-- ✅ **High-Performance Caching** - Token and claims caching with CacheManager
-- ✅ **Account Lockout** - Automatic protection against brute-force attacks
-- ✅ **Full TypeScript Support** - Complete type safety with generics
+| Feature | Description |
+|---------|-------------|
+| 🔐 **JWT Authentication** | Secure token-based auth with access/refresh token pairs |
+| 👥 **Role-Based Access Control** | C# Identity-style RBAC with hierarchical roles |
+| 🎫 **Claims-Based Authorization** | Fine-grained permissions using type/value claims |
+| 🗄️ **Database-Agnostic** | `IAuthStore` interface works with any database |
+| 🔌 **Context Integration** | Automatic user injection into @struktos/core RequestContext |
+| ⚡ **High-Performance Caching** | Token and claims caching with CacheManager |
+| 🛡️ **Account Lockout** | Automatic brute-force protection |
+| 🔒 **Password Security** | Bcrypt hashing with strength validation |
+| 🏛️ **Hexagonal Architecture** | Clean Ports & Adapters pattern |
 
 ## 📦 Installation
 
 ```bash
-npm install @struktos/core @struktos/auth jsonwebtoken bcryptjs
+npm install @struktos/core @struktos/auth
+# or
+yarn add @struktos/core @struktos/auth
+# or
+pnpm add @struktos/core @struktos/auth
+```
+
+## 🏗️ Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Application Layer                           │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────┐  │
+│  │   AuthService   │  │   AuthGuards    │  │   Middleware   │  │
+│  │  (IAuthService) │  │  (IAuthGuard)   │  │  (IStruktosM.) │  │
+│  └────────┬────────┘  └────────┬────────┘  └───────┬────────┘  │
+├───────────┼────────────────────┼───────────────────┼────────────┤
+│           │         Ports      │                   │            │
+│  ┌────────▼────────┐  ┌────────▼────────┐  ┌──────▼────────┐   │
+│  │   ITokenPort    │  │  IPasswordPort  │  │  IAuthStore   │   │
+│  └────────┬────────┘  └────────┬────────┘  └───────┬───────┘   │
+├───────────┼────────────────────┼───────────────────┼────────────┤
+│           │       Adapters     │                   │            │
+│  ┌────────▼────────┐  ┌────────▼────────┐  ┌──────▼────────┐   │
+│  │ JwtTokenAdapter │  │BcryptPasswordAd.│  │InMemoryAuth..│   │
+│  │  (jsonwebtoken) │  │   (bcryptjs)    │  │ (Prisma/etc) │   │
+│  └─────────────────┘  └─────────────────┘  └───────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 🚀 Quick Start
@@ -31,462 +59,651 @@ npm install @struktos/core @struktos/auth jsonwebtoken bcryptjs
 ### 1. Initialize Auth Service
 
 ```typescript
-import { AuthService, InMemoryAuthStore } from '@struktos/auth';
+import { AuthService, InMemoryAuthStore, JwtTokenAdapter, BcryptPasswordAdapter } from '@struktos/auth';
 
+// Create adapters (Hexagonal Architecture)
+const tokenAdapter = new JwtTokenAdapter({
+  secret: process.env.JWT_SECRET!,
+  accessTokenExpiry: '1h',
+  refreshTokenExpiry: '7d',
+  issuer: 'my-app',
+  audience: 'my-api'
+});
+
+const passwordAdapter = new BcryptPasswordAdapter({
+  defaultRounds: 12,
+  policy: {
+    minLength: 8,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumbers: true,
+    requireSpecialChar: true
+  }
+});
+
+// Use InMemoryAuthStore for development, implement IAuthStore for production
 const authStore = new InMemoryAuthStore();
+
+// Create auth service
 const authService = new AuthService(authStore, {
-  jwtSecret: 'your-super-secret-key',
+  jwtSecret: process.env.JWT_SECRET!,
   jwtExpiresIn: '1h',
+  refreshTokenExpiresIn: '7d',
   enableTokenCache: true,
-  enableClaimsCache: true
+  enableClaimsCache: true,
+  maxAccessAttempts: 5,
+  lockoutDuration: 15 // minutes
 });
 ```
 
-### 2. Add Authentication Middleware
+### 2. User Registration & Login
+
+```typescript
+// Registration
+const registerResult = await authService.register({
+  username: 'john.doe',
+  email: 'john@example.com',
+  password: 'SecurePass123!'
+});
+
+if (registerResult.success) {
+  console.log('User created:', registerResult.user);
+  console.log('Access Token:', registerResult.accessToken);
+  console.log('Refresh Token:', registerResult.refreshToken);
+}
+
+// Login
+const loginResult = await authService.login({
+  username: 'john.doe', // or email
+  password: 'SecurePass123!'
+});
+
+if (loginResult.success) {
+  // User authenticated
+  const { accessToken, refreshToken, expiresIn } = loginResult;
+}
+
+// Handle locked accounts
+if (loginResult.isLockedOut) {
+  console.log('Account is locked. Try again later.');
+}
+```
+
+### 3. Add Authentication Middleware
 
 ```typescript
 import express from 'express';
 import { createStruktosMiddleware } from '@struktos/adapter-express';
-import { createAuthenticateMiddleware } from '@struktos/auth';
+import { AuthMiddleware, createAuthMiddleware } from '@struktos/auth';
 
 const app = express();
 
-// Context middleware (required)
+// Context middleware (required first)
 app.use(createStruktosMiddleware());
 
 // Authentication middleware
-const authenticate = createAuthenticateMiddleware(authService);
-
-// Protected route
-app.get('/api/profile', authenticate, (req, res) => {
-  res.json({ user: req.user });
-});
-```
-
-### 3. Register and Login
-
-```typescript
-// Register
-app.post('/auth/register', async (req, res) => {
-  const result = await authService.register({
-    username: req.body.username,
-    email: req.body.email,
-    password: req.body.password
-  });
-  
-  if (result.success) {
-    res.json({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken
-    });
-  } else {
-    res.status(400).json({ error: result.error });
-  }
+const authMiddleware = new AuthMiddleware(authService, {
+  excludePaths: ['/auth/login', '/auth/register', '/health'],
+  optional: false // Set true for optional authentication
 });
 
-// Login
-app.post('/auth/login', async (req, res) => {
-  const result = await authService.login({
-    username: req.body.username,
-    password: req.body.password
-  });
-  
-  if (result.success) {
-    res.json({
-      accessToken: result.accessToken,
-      user: result.user
-    });
-  } else {
-    res.status(401).json({ error: result.error });
-  }
-});
+// Apply to all routes
+app.use(createAuthMiddleware(authService));
+
+// Or use class-based middleware with Struktos pipeline
+app.use(authMiddleware.handle.bind(authMiddleware));
 ```
 
-## 🔐 Authorization
-
-### Role-Based Authorization
-
-```typescript
-import { requireRoles } from '@struktos/auth';
-
-// Require Admin role
-app.get('/api/admin/users', 
-  authenticate, 
-  requireRoles('Admin'), 
-  (req, res) => {
-    res.json({ users: [...] });
-  }
-);
-
-// Require any of multiple roles
-app.get('/api/moderation/reports', 
-  authenticate,
-  requireRoles('Moderator', 'Admin'),
-  (req, res) => {
-    res.json({ reports: [...] });
-  }
-);
-```
-
-### Claims-Based Authorization
-
-```typescript
-import { requireClaim } from '@struktos/auth';
-
-// Require specific permission claim
-app.post('/api/documents', 
-  authenticate,
-  requireClaim('permission', 'write:documents'),
-  (req, res) => {
-    res.status(201).json({ document: {...} });
-  }
-);
-
-// Check for claim type only
-app.get('/api/beta-features',
-  authenticate,
-  requireClaim('feature', 'beta-access'),
-  (req, res) => {
-    res.json({ features: [...] });
-  }
-);
-```
-
-### Custom Authorization Guards
-
-```typescript
-import { 
-  createAuthorizeMiddleware, 
-  RoleBasedGuard, 
-  ClaimBasedGuard,
-  CompositeGuard 
-} from '@struktos/auth';
-
-// Create composite guard (AND logic)
-const guard = new CompositeGuard([
-  new RoleBasedGuard(['Admin']),
-  new ClaimBasedGuard('department', 'engineering')
-], 'AND');
-
-app.delete('/api/critical-resource/:id',
-  authenticate,
-  createAuthorizeMiddleware(guard),
-  (req, res) => {
-    res.json({ deleted: true });
-  }
-);
-```
-
-## 📚 Core Concepts
-
-### User Model
-
-```typescript
-interface User {
-  id: string;
-  username: string;
-  email: string;
-  passwordHash: string;
-  roles?: string[];
-  claims?: Claim[];
-  emailConfirmed?: boolean;
-  twoFactorEnabled?: boolean;
-  lockoutEnd?: Date | null;
-  lockoutEnabled?: boolean;
-  accessFailedCount?: number;
-}
-```
-
-### Roles
-
-```typescript
-// Add role to user
-await authStore.addUserToRole(userId, 'Admin');
-
-// Check if user has role
-const isAdmin = await authStore.isUserInRole(userId, 'Admin');
-
-// Get all user roles
-const roles = await authStore.getUserRoles(userId);
-```
-
-### Claims
-
-```typescript
-// Add claim to user
-await authStore.addUserClaim(userId, {
-  type: 'permission',
-  value: 'write:documents'
-});
-
-// Check if user has claim
-const hasClaim = await authStore.hasUserClaim(
-  userId, 
-  'permission', 
-  'write:documents'
-);
-
-// Get all user claims
-const claims = await authStore.getUserClaims(userId);
-```
-
-## 🗄️ Database Integration
-
-Implement `IAuthStore` for your database:
-
-```typescript
-import { IAuthStore, User } from '@struktos/auth';
-import { PrismaClient } from '@prisma/client';
-
-class PrismaAuthStore implements IAuthStore<User> {
-  constructor(private prisma: PrismaClient) {}
-  
-  async findUserById(userId: string): Promise<User | null> {
-    return await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { roles: true, claims: true }
-    });
-  }
-  
-  async findUserByUsername(username: string): Promise<User | null> {
-    return await this.prisma.user.findUnique({
-      where: { username },
-      include: { roles: true, claims: true }
-    });
-  }
-  
-  // ... implement other methods
-}
-
-// Use with AuthService
-const authStore = new PrismaAuthStore(prisma);
-const authService = new AuthService(authStore, options);
-```
-
-## ⚡ Performance Features
-
-### Token Caching
-
-```typescript
-const authService = new AuthService(authStore, {
-  jwtSecret: 'secret',
-  enableTokenCache: true,
-  tokenCacheTTL: 30 * 60 * 1000  // 30 minutes
-});
-```
-
-### Claims Caching
-
-```typescript
-const authService = new AuthService(authStore, {
-  jwtSecret: 'secret',
-  enableClaimsCache: true,
-  claimsCacheTTL: 15 * 60 * 1000  // 15 minutes
-});
-```
-
-## 🔒 Security Features
-
-### Account Lockout
-
-```typescript
-const authService = new AuthService(authStore, {
-  jwtSecret: 'secret',
-  maxAccessAttempts: 5,        // Lock after 5 failed attempts
-  lockoutDuration: 15          // Lock for 15 minutes
-});
-```
-
-### Password Hashing
-
-Automatic bcrypt hashing with configurable rounds:
-
-```typescript
-const authService = new AuthService(authStore, {
-  jwtSecret: 'secret',
-  bcryptRounds: 12  // More rounds = more security, slower
-});
-```
-
-### Password Change
-
-```typescript
-const success = await authService.changePassword(
-  userId,
-  currentPassword,
-  newPassword
-);
-```
-
-## 🔗 Context Integration
-
-User automatically injected into @struktos/core Context:
+### 4. Access User from Context
 
 ```typescript
 import { RequestContext } from '@struktos/core';
 
-async function someBusinessLogic() {
+app.get('/api/profile', (req, res) => {
+  // User automatically injected by AuthMiddleware
   const ctx = RequestContext.current();
-  const userId = ctx?.get('userId');
   const user = ctx?.get('user');
-  
-  console.log(`Processing request for user: ${userId}`);
+  const userId = ctx?.get('userId');
+  const roles = ctx?.get('roles');
+
+  // Or from request object
+  const userFromReq = req.user;
+
+  res.json({
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    roles: user.roles
+  });
+});
+```
+
+## 🔒 Authorization
+
+### Role-Based Access Control (RBAC)
+
+```typescript
+import { requireRoles, requireAllRoles, RolesMiddleware } from '@struktos/auth';
+
+// Require ANY of the specified roles (OR logic)
+app.get('/api/admin', requireRoles('Admin', 'SuperAdmin'), (req, res) => {
+  res.json({ message: 'Welcome, Admin!' });
+});
+
+// Require ALL specified roles (AND logic)
+app.get('/api/super', requireAllRoles('Admin', 'Verified'), (req, res) => {
+  res.json({ message: 'You have all required roles!' });
+});
+
+// Using class-based middleware
+const rolesMiddleware = new RolesMiddleware(['Admin', 'Moderator']);
+app.use('/admin/*', rolesMiddleware.handle.bind(rolesMiddleware));
+
+// Managing roles
+await authStore.addUserToRole(userId, 'Admin');
+await authStore.addUserToRole(userId, 'Moderator');
+await authStore.removeUserFromRole(userId, 'Moderator');
+
+const userRoles = await authStore.getUserRoles(userId);
+const isAdmin = await authStore.isUserInRole(userId, 'Admin');
+```
+
+### Claims-Based Authorization
+
+Claims provide fine-grained permissions beyond roles.
+
+```typescript
+import { requireClaim, requireClaims, ClaimsMiddleware } from '@struktos/auth';
+
+// Require a specific claim type
+app.get('/api/documents', requireClaim('permission', 'read:documents'), (req, res) => {
+  res.json({ documents: [] });
+});
+
+// Require multiple claims (AND logic)
+app.post('/api/documents', 
+  requireClaims(
+    { type: 'permission', value: 'write:documents' },
+    { type: 'department', value: 'engineering' }
+  ),
+  (req, res) => {
+    res.json({ message: 'Document created!' });
+  }
+);
+
+// Managing claims
+await authStore.addUserClaim(userId, { type: 'permission', value: 'read:users' });
+await authStore.addUserClaim(userId, { type: 'permission', value: 'write:users' });
+await authStore.addUserClaim(userId, { type: 'department', value: 'engineering' });
+await authStore.addUserClaim(userId, { type: 'tenant', value: 'acme-corp' });
+
+await authStore.removeUserClaim(userId, { type: 'permission', value: 'write:users' });
+
+const claims = await authStore.getUserClaims(userId);
+```
+
+### Authorization Guards
+
+Guards provide flexible, composable authorization logic.
+
+```typescript
+import {
+  RoleBasedGuard,
+  ClaimBasedGuard,
+  ResourceBasedGuard,
+  OwnerBasedGuard,
+  CompositeGuard,
+  ConditionalGuard,
+  createAuthorizeMiddleware
+} from '@struktos/auth';
+
+// Role-based guard
+const adminGuard = new RoleBasedGuard(['Admin', 'SuperAdmin']);
+
+// Claim-based guard
+const readPermissionGuard = new ClaimBasedGuard('permission', 'read:sensitive');
+
+// Resource-based guard (custom logic)
+const resourceGuard = new ResourceBasedGuard();
+
+// Owner-based guard (check if user owns the resource)
+const ownerGuard = new OwnerBasedGuard();
+
+// Composite guard (combine multiple guards)
+const compositeGuard = new CompositeGuard(
+  [adminGuard, readPermissionGuard],
+  'OR' // 'AND' or 'OR' logic
+);
+
+// Conditional guard (custom predicate)
+const businessHoursGuard = new ConditionalGuard((ctx) => {
+  const hour = new Date().getHours();
+  return hour >= 9 && hour <= 17;
+}, 'Access only during business hours (9 AM - 5 PM)');
+
+// Use guards with middleware
+app.get('/api/sensitive', createAuthorizeMiddleware(compositeGuard), (req, res) => {
+  res.json({ data: 'sensitive information' });
+});
+```
+
+## 🔑 Token Management
+
+### JWT Token Adapter
+
+```typescript
+import { JwtTokenAdapter, TokenVerificationError, TokenErrorType } from '@struktos/auth';
+
+const tokenAdapter = new JwtTokenAdapter({
+  secret: process.env.JWT_SECRET!,
+  accessTokenExpiry: '15m',     // Short-lived access tokens
+  refreshTokenExpiry: '7d',     // Long-lived refresh tokens
+  issuer: 'my-application',
+  audience: 'my-api'
+});
+
+// Generate tokens
+const accessToken = await tokenAdapter.generateAccessToken(user);
+const refreshToken = await tokenAdapter.generateRefreshToken(user);
+const tokenPair = await tokenAdapter.generateTokenPair(user);
+
+// Verify tokens
+try {
+  const payload = await tokenAdapter.verifyToken(token);
+  console.log('User ID:', payload.sub);
+  console.log('Username:', payload.username);
+  console.log('Roles:', payload.roles);
+} catch (error) {
+  if (error instanceof TokenVerificationError) {
+    switch (error.type) {
+      case TokenErrorType.EXPIRED_TOKEN:
+        console.log('Token has expired');
+        break;
+      case TokenErrorType.INVALID_SIGNATURE:
+        console.log('Invalid token signature');
+        break;
+      case TokenErrorType.REVOKED_TOKEN:
+        console.log('Token has been revoked');
+        break;
+    }
+  }
+}
+
+// Decode without verification (useful for expired tokens)
+const payload = tokenAdapter.decodeToken(expiredToken);
+
+// Token revocation
+await tokenAdapter.revokeToken(refreshToken);
+const isRevoked = await tokenAdapter.isTokenRevoked(refreshToken);
+
+// Refresh tokens
+const newTokens = await authService.refreshToken(refreshToken);
+```
+
+### Token Payload Structure
+
+```typescript
+interface TokenPayload {
+  sub: string;           // User ID
+  username: string;      // Username
+  email: string;         // Email
+  roles: string[];       // User roles
+  type: 'access' | 'refresh';
+  iat: number;           // Issued at
+  exp: number;           // Expiration
+  iss: string;           // Issuer
+  aud: string;           // Audience
+  jti: string;           // JWT ID (unique identifier)
 }
 ```
 
-## 📖 API Reference
+## 🔐 Password Security
 
-### AuthService
+### Bcrypt Password Adapter
 
 ```typescript
-class AuthService<TUser extends User> {
-  // Registration
-  register(data: RegistrationData): Promise<AuthenticationResult>
-  
-  // Authentication
-  login(credentials: LoginCredentials): Promise<AuthenticationResult>
-  validateToken(token: string): Promise<TUser | null>
-  
-  // Context
-  getCurrentUser(): TUser | undefined
-  getCurrentUserId(): string | undefined
-  
-  // Password
-  changePassword(userId, currentPassword, newPassword): Promise<boolean>
+import { BcryptPasswordAdapter, PasswordStrength } from '@struktos/auth';
+
+const passwordAdapter = new BcryptPasswordAdapter({
+  defaultRounds: 12, // Higher = more secure but slower
+  policy: {
+    minLength: 8,
+    maxLength: 128,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumbers: true,
+    requireSpecialChar: true,
+    disallowCommonPasswords: true
+  }
+});
+
+// Hash password
+const hash = await passwordAdapter.hash('SecurePass123!');
+
+// Verify password
+const isValid = await passwordAdapter.verify('SecurePass123!', hash);
+
+// Validate against policy
+const validation = passwordAdapter.validate('weak');
+if (!validation.isValid) {
+  console.log('Password errors:', validation.errors);
+  // ['Password must be at least 8 characters', 'Must contain uppercase letter', ...]
 }
+
+// Check password strength
+const strength = passwordAdapter.checkStrength('MyP@ssw0rd!');
+console.log('Strength:', PasswordStrength[strength.strength]); // 'STRONG'
+console.log('Score:', strength.score); // 0-100
+console.log('Feedback:', strength.feedback);
+
+// Generate secure password
+const randomPassword = passwordAdapter.generatePassword(16, {
+  includeUppercase: true,
+  includeLowercase: true,
+  includeNumbers: true,
+  includeSymbols: true
+});
 ```
 
-### Middleware
+## 🗄️ Database Integration
+
+### Implementing IAuthStore
+
+Create a custom implementation for your database:
 
 ```typescript
-// Authentication
-createAuthenticateMiddleware(authService)
-createOptionalAuthMiddleware(authService)
+import { IAuthStore, User, Role, Claim } from '@struktos/auth';
+import { PrismaClient } from '@prisma/client';
 
-// Authorization
-requireRoles(...roles: string[])
-requireClaim(type: string, value?: string)
-createAuthorizeMiddleware(guard: IAuthGuard)
-```
+export class PrismaAuthStore implements IAuthStore<User> {
+  constructor(private readonly prisma: PrismaClient) {}
 
-### Guards
+  // User CRUD
+  async findUserById(userId: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { roles: true, claims: true }
+    });
+  }
 
-```typescript
-// Built-in guards
-new RoleBasedGuard(['Admin', 'Moderator'])
-new ClaimBasedGuard('permission', 'write:documents')
-new ResourceBasedGuard()
-new CompositeGuard([guard1, guard2], 'AND' | 'OR')
+  async findUserByUsername(username: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { username },
+      include: { roles: true, claims: true }
+    });
+  }
+
+  async findUserByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { email },
+      include: { roles: true, claims: true }
+    });
+  }
+
+  async createUser(userData: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User> {
+    return this.prisma.user.create({
+      data: userData
+    });
+  }
+
+  async updateUser(userId: string, updates: Partial<User>): Promise<User | null> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: updates
+    });
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    await this.prisma.user.delete({ where: { id: userId } });
+    return true;
+  }
+
+  // Role management
+  async getUserRoles(userId: string): Promise<string[]> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { roles: { select: { name: true } } }
+    });
+    return user?.roles.map(r => r.name) ?? [];
+  }
+
+  async addUserToRole(userId: string, roleName: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        roles: {
+          connectOrCreate: {
+            where: { name: roleName },
+            create: { name: roleName }
+          }
+        }
+      }
+    });
+  }
+
+  async removeUserFromRole(userId: string, roleName: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        roles: { disconnect: { name: roleName } }
+      }
+    });
+  }
+
+  async isUserInRole(userId: string, roleName: string): Promise<boolean> {
+    const roles = await this.getUserRoles(userId);
+    return roles.includes(roleName);
+  }
+
+  // Claims management
+  async getUserClaims(userId: string): Promise<Claim[]> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { claims: true }
+    });
+    return user?.claims ?? [];
+  }
+
+  async addUserClaim(userId: string, claim: Claim): Promise<void> {
+    await this.prisma.claim.create({
+      data: {
+        type: claim.type,
+        value: claim.value,
+        userId
+      }
+    });
+  }
+
+  async removeUserClaim(userId: string, claim: Claim): Promise<void> {
+    await this.prisma.claim.deleteMany({
+      where: {
+        userId,
+        type: claim.type,
+        value: claim.value
+      }
+    });
+  }
+
+  // Security
+  async incrementAccessFailedCount(userId: string): Promise<number> {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { accessFailedCount: { increment: 1 } }
+    });
+    return user.accessFailedCount;
+  }
+
+  async resetAccessFailedCount(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { accessFailedCount: 0 }
+    });
+  }
+
+  async setLockoutEnd(userId: string, lockoutEnd: Date | null): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { lockoutEnd }
+    });
+  }
+}
 ```
 
 ## 🧪 Testing
 
-```typescript
-import { InMemoryAuthStore, AuthService } from '@struktos/auth';
+Use `InMemoryAuthStore` for unit and integration tests:
 
-describe('Authentication', () => {
+```typescript
+import {
+  InMemoryAuthStore,
+  JwtTokenAdapter,
+  BcryptPasswordAdapter,
+  RoleBasedGuard
+} from '@struktos/auth';
+
+describe('Authentication Flow', () => {
   let authStore: InMemoryAuthStore;
-  let authService: AuthService;
-  
+  let tokenAdapter: JwtTokenAdapter;
+  let passwordAdapter: BcryptPasswordAdapter;
+
   beforeEach(() => {
     authStore = new InMemoryAuthStore();
-    authService = new AuthService(authStore, {
-      jwtSecret: 'test-secret'
+    tokenAdapter = new JwtTokenAdapter({
+      secret: 'test-secret-key-32-characters-min',
+      accessTokenExpiry: '1h'
+    });
+    passwordAdapter = new BcryptPasswordAdapter({
+      defaultRounds: 4 // Lower rounds for faster tests
     });
   });
-  
-  it('should register user', async () => {
-    const result = await authService.register({
-      username: 'test',
+
+  afterEach(() => {
+    authStore.clear(); // Reset store between tests
+    tokenAdapter.clearRevokedTokens();
+  });
+
+  it('should register and authenticate user', async () => {
+    // Register
+    const passwordHash = await passwordAdapter.hash('TestPass123!');
+    const user = await authStore.createUser({
+      username: 'testuser',
       email: 'test@example.com',
-      password: 'password123'
+      passwordHash
     });
-    
-    expect(result.success).toBe(true);
-    expect(result.accessToken).toBeDefined();
+
+    expect(user.id).toBeDefined();
+
+    // Authenticate
+    const storedUser = await authStore.findUserByUsername('testuser');
+    const isValid = await passwordAdapter.verify('TestPass123!', storedUser!.passwordHash);
+    expect(isValid).toBe(true);
+
+    // Generate token
+    const tokens = await tokenAdapter.generateTokenPair(storedUser!);
+    expect(tokens.accessToken.token).toBeDefined();
+
+    // Verify token
+    const payload = await tokenAdapter.verifyToken(tokens.accessToken.token);
+    expect(payload.sub).toBe(user.id);
+  });
+
+  it('should enforce role-based access', async () => {
+    const user = await authStore.createUser({
+      username: 'admin',
+      email: 'admin@example.com',
+      passwordHash: 'hash'
+    });
+
+    await authStore.addUserToRole(user.id, 'Admin');
+    const updatedUser = await authStore.findUserById(user.id);
+
+    const adminGuard = new RoleBasedGuard(['Admin']);
+    const result = await adminGuard.canActivate({
+      user: updatedUser!,
+      resource: null,
+      action: 'access'
+    });
+
+    expect(result.allowed).toBe(true);
   });
 });
 ```
 
-## 📊 Architecture
+## 📚 API Reference
 
-```
-HTTP Request with JWT
-    ↓
-createAuthenticateMiddleware
-    ↓
-Extract & Validate Token
-    ↓
-AuthService.validateToken()
-    ↓
-Check Cache → If miss → Verify JWT → Load User from Store
-    ↓
-Inject User into Context
-    ↓
-[Your Route Handlers]
-    ↓
-Authorization Guards (if configured)
-    ↓
-Check Roles/Claims
-    ↓
-Grant/Deny Access
-```
+### Interfaces
 
-## 🎯 Use Cases
+| Interface | Description |
+|-----------|-------------|
+| `IAuthService` | Core authentication service contract |
+| `IAuthStore` | Database-agnostic storage interface |
+| `IAuthGuard` | Authorization guard interface |
+| `ITokenPort` | JWT token operations port |
+| `IPasswordPort` | Password hashing operations port |
 
-### Basic Authentication
+### Models
 
-```typescript
-// Registration and login with JWT tokens
-const result = await authService.login(credentials);
-// User automatically in Context for all subsequent operations
-```
+| Model | Description |
+|-------|-------------|
+| `User` | Base user entity (C# IdentityUser inspired) |
+| `Role` | Role definition with optional claims |
+| `Claim` | Type/value pair for permissions |
+| `TokenPayload` | JWT token payload structure |
+| `AuthenticationResult` | Login/register response |
 
-### Enterprise RBAC
+### Middleware
+
+| Middleware | Description |
+|------------|-------------|
+| `AuthMiddleware` | JWT authentication with context injection |
+| `RolesMiddleware` | Role-based authorization |
+| `ClaimsMiddleware` | Claims-based authorization |
+| `GuardMiddleware` | Custom guard-based authorization |
+
+### Factory Functions
 
 ```typescript
-// Hierarchical role system
-await authStore.addUserToRole(userId, 'Admin');
-app.get('/admin/*', authenticate, requireRoles('Admin'), ...);
+// Middleware factories
+createAuthMiddleware(authService, options?)
+createOptionalAuthMiddleware(authService, options?)
+requireRoles(...roles: string[])
+requireAllRoles(...roles: string[])
+requireClaim(type: string, value?: string)
+requireClaims(...claims: ClaimRequirement[])
+createAuthorizeMiddleware(guard: IAuthGuard)
+
+// Adapter factories
+createJwtTokenAdapter(options: JwtAdapterOptions)
+createBcryptPasswordAdapter(options?: BcryptAdapterOptions)
 ```
 
-### Fine-Grained Permissions
+## 🔗 Related Packages
 
-```typescript
-// Permission-based access control
-await authStore.addUserClaim(userId, {
-  type: 'permission',
-  value: 'read:sensitive-data'
-});
-```
+| Package | Description |
+|---------|-------------|
+| [@struktos/core](https://www.npmjs.com/package/@struktos/core) | Context propagation, caching, enterprise patterns |
+| [@struktos/adapter-express](https://www.npmjs.com/package/@struktos/adapter-express) | Express.js integration |
+| [@struktos/adapter-fastify](https://www.npmjs.com/package/@struktos/adapter-fastify) | Fastify integration |
+| [@struktos/adapter-nestjs](https://www.npmjs.com/package/@struktos/adapter-nestjs) | NestJS integration |
+| [@struktos/prisma](https://www.npmjs.com/package/@struktos/prisma) | Prisma database adapter |
 
-### Multi-Tenant Applications
+## 🗺️ Roadmap
 
-```typescript
-// Tenant-specific claims
-await authStore.addUserClaim(userId, {
-  type: 'tenant',
-  value: 'acme-corp'
-});
-```
-
-## 🤝 Related Packages
-
-- **[@struktos/core](https://www.npmjs.com/package/@struktos/core)** - Context propagation and caching
-- **[@struktos/adapter-express](https://www.npmjs.com/package/@struktos/adapter-express)** - Express integration
-- **@struktos/adapter-fastify** (coming soon) - Fastify integration
+- [ ] OAuth2/OIDC Support
+- [ ] Two-Factor Authentication (2FA)
+- [ ] Session Management
+- [ ] Rate Limiting Integration
+- [ ] Audit Logging
+- [ ] Multi-Tenant Enhancements
 
 ## 📄 License
 
-MIT © Struktos.js Team
+MIT © Struktos Contributors
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/struktosjs/auth)
-- [Issue Tracker](https://github.com/struktosjs/auth/issues)
+- [Documentation](https://struktos.dev/auth)
+- [GitHub Repository](https://github.com/struktos/auth)
 - [NPM Package](https://www.npmjs.com/package/@struktos/auth)
-- [@struktos/core Documentation](https://www.npmjs.com/package/@struktos/core)
-
----
-
-**Built with ❤️ for enterprise Node.js security**
+- [Changelog](./CHANGELOG.md)
+- [Issue Tracker](https://github.com/struktos/auth/issues)
